@@ -1,146 +1,190 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import KMeans
 import plotly.express as px
-import time
+import io
+import base64
+import streamlit.components.v1 as components
 
-# Configuración de página
-st.set_page_config(page_title="Team Splitter", page_icon="⚽", layout="wide")
+# Config
+st.set_page_config(page_title="Build Your Team APP — Generador de Equipos", page_icon="⚽", layout="wide")
 
-# CSS para tipografía y estilos responsivos
-st.markdown(
-    """
-    <style>
-    body {font-family: 'Inter', sans-serif;}
-    h1, h2, h3, h4 {font-family: 'Poppins', sans-serif;}
-    .footer {text-align:center; font-size:14px; margin-top:50px; color:#666;}
-    .card {
-        background-color: #f9f9f9;
-        border-radius: 12px;
-        padding: 16px;
-        margin: 10px 0;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    }
-    @media (max-width: 768px) {
-        .stColumn > div {flex: 1 1 100% !important;}
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# Branding
-st.title("⚽ Build Your Team APP")
-st.subheader("Generador de Equipos Balanceados con K-Means")
-
-st.markdown("Subí un archivo `.xlsx` o cargá los datos manualmente para crear dos equipos equilibrados.")
-
-# Descargar template
-with st.expander("📥 Descargar archivo modelo y guía de carga"):
-    ejemplo = pd.DataFrame({
-        'NOMBRE': ['Juan','Pedro','Lucía','Ana'],
-        'POSICION': ['DEF','DEL','MED','DEL'],
-        'EDAD': [25,30,22,27],
-        'RESISTENCIA': [7,6,8,5],
-        'VELOCIDAD': [6,8,7,5],
-        'DRIBLE': [5,7,6,4],
-        'PEGADA': [6,8,5,4],
-        'PASE': [7,5,8,6],
-        'DEFENSA': [8,4,5,3],
-        'SEXO': ['H','H','M','M']
-    })
-    st.download_button("Descargar Excel modelo", ejemplo.to_csv(index=False).encode('utf-8'), "equipo_modelo.csv")
-    st.markdown("➡️ El archivo debe tener las columnas indicadas en el ejemplo.")
-
-# Subida de archivo
-archivo = st.file_uploader("📂 Cargar archivo .xlsx", type=["xlsx"])
-
-# Edición manual
-st.markdown("### O ingresá los datos manualmente")
-default_df = pd.DataFrame(columns=['NOMBRE','POSICION','EDAD','RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA','SEXO'])
-edited = st.data_editor(default_df, num_rows="dynamic")
-
-# Función para generar equipos con KMeans
-def generar_equipos(df, cabeza_a=None, cabeza_b=None):
-    features = ['EDAD','RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA','SEXO']
-    df_features = df.copy()
-    df_features['SEXO'] = df_features['SEXO'].astype(str).str.upper().map({'M':1,'H':1,'HOMBRE':1,'F':0,'MUJER':0})
-    df_features['SEXO'] = df_features['SEXO'].fillna(0.5)
-
-    scaler = MinMaxScaler()
-    X = scaler.fit_transform(df_features[features])
-
-    kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X)
-    df['Equipo'] = labels
-
-    equipo_a = df[df['Equipo']==0]
-    equipo_b = df[df['Equipo']==1]
-
-    return equipo_a, equipo_b
-
-# Procesamiento de datos
-datos = None
-if archivo:
-    df = pd.read_excel(archivo)
-    datos = df
-elif not edited.empty:
-    datos = edited
-
-if datos is not None and not datos.empty:
-    columnas_esperadas = ['NOMBRE','POSICION','EDAD','RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA','SEXO']
-
-    if all(col in datos.columns for col in columnas_esperadas):
-        st.success("Datos cargados correctamente ✅")
-
-        col1,col2 = st.columns(2)
-        with col1:
-            cabeza_a = st.selectbox("Cabeza de grupo A (opcional)", options=[None]+datos['NOMBRE'].tolist())
-        with col2:
-            cabeza_b = st.selectbox("Cabeza de grupo B (opcional)", options=[None]+datos['NOMBRE'].tolist())
-
-        if st.button("🚀 Generar Equipos", type="primary"):
-            with st.spinner("Generando equipos balanceados con K-Means..."):
-                time.sleep(1)
-                equipo_a, equipo_b = generar_equipos(datos, cabeza_a, cabeza_b)
-
-            st.toast("Equipos generados con éxito! ⚽")
-
-            col1,col2 = st.columns(2)
-            with col1:
-                st.markdown("#### 🟥 Equipo A")
-                for _, row in equipo_a.iterrows():
-                    st.markdown(f"<div class='card'><b>{row['NOMBRE']}</b><br>{row['POSICION']} | {row['EDAD']} años | {row['SEXO']}</div>", unsafe_allow_html=True)
-                st.download_button("⬇️ Descargar Equipo A (CSV)", equipo_a.to_csv(index=False).encode('utf-8'), "equipo_a.csv")
-            with col2:
-                st.markdown("#### 🟦 Equipo B")
-                for _, row in equipo_b.iterrows():
-                    st.markdown(f"<div class='card'><b>{row['NOMBRE']}</b><br>{row['POSICION']} | {row['EDAD']} años | {row['SEXO']}</div>", unsafe_allow_html=True)
-                st.download_button("⬇️ Descargar Equipo B (CSV)", equipo_b.to_csv(index=False).encode('utf-8'), "equipo_b.csv")
-
-            # Radar chart comparativo
-            def resumir_stats(equipo):
-                return equipo[['RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA']].mean()
-            stats_a = resumir_stats(equipo_a)
-            stats_b = resumir_stats(equipo_b)
-
-            radar_df = pd.DataFrame({
-                'Habilidad': stats_a.index,
-                'Equipo A': stats_a.values,
-                'Equipo B': stats_b.values
-            })
-            radar_df = pd.melt(radar_df, id_vars=['Habilidad'], var_name='Equipo', value_name='Valor')
-
-            fig = px.line_polar(radar_df, r='Valor', theta='Habilidad', color='Equipo', line_close=True)
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.error("El archivo no tiene las columnas esperadas ❌")
-
-# Footer con cafecito
+# --- Styles ---
 st.markdown("""
-<div class='footer'>
-    ☕ Si esta app te resultó útil y querés invitarme un cafecito: <a href='https://cafecito.app/jmperalta' target='_blank'>Cafecito</a>
-    <br>Contacto: <a href='https://www.linkedin.com/in/peraltajm/' target='_blank'>LinkedIn</a>
-</div>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Poppins:wght@300;400;600;700&display=swap');
+html, body, [class*="css"], .stButton>button { font-family: 'Inter', 'Poppins', sans-serif; }
+.header { display:flex; align-items:center; gap:16px; }
+.brand { font-weight:700; font-size:24px; }
+.subtitle { color: #6b7280; }
+.card { background: #ffffff; border-radius:12px; padding:16px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08); }
+.team-card { border-left: 6px solid #2563eb; padding:12px; border-radius:8px; }
+.donate { background:#6366f1; color:white; padding:10px 16px; border-radius:10px; font-weight:600; text-decoration:none; }
+.small { font-size:13px; color:#6b7280; }
+</style>
 """, unsafe_allow_html=True)
+
+# Header / Branding
+col1, col2 = st.columns([3,1])
+with col1:
+    st.markdown('<div class="header">\n  <div class="brand">Build Your Team APP ⚽</div>\n  <div class="subtitle">Generador de equipos balanceados (K-Means)</div>\n</div>', unsafe_allow_html=True)
+with col2:
+    st.markdown('<div style="text-align:right">\n  <a href="https://cafecito.app/jmperalta" target="_blank" class="donate">☕ Invitame un cafecito</a>\n</div>', unsafe_allow_html=True)
+
+st.markdown('---')
+
+# Selector de modo
+modo = st.radio("Seleccioná el modo de carga", ["Express","Avanzado"], index=0)
+
+# --- Columnas y template según modo ---
+if modo == "Express":
+    columnas_esperadas = ['NOMBRE','SEXO','RESISTENCIA','HABILIDAD','POSICION']
+    template = pd.DataFrame({
+        'NOMBRE': ['Jugador 1','Jugador 2','Jugador 3','Jugador 4'],
+        'SEXO': ['H','M','H','H'],
+        'RESISTENCIA': [80,70,60,75],
+        'HABILIDAD': [85,72,68,90],
+        'POSICION': ['ATAQUE','DEFENSA','ARQUERO','ATAQUE']
+    })
+    features = ['RESISTENCIA','HABILIDAD','SEXO']
+else:
+    columnas_esperadas = ['NOMBRE','POSICION','EDAD','RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA','SEXO']
+    template = pd.DataFrame({
+        'NOMBRE': ['Jugador 1','Jugador 2','Jugador 3','Jugador 4'],
+        'POSICION': ['Delantero','Mediocentro','Defensa','Arquero'],
+        'EDAD': [25,27,30,22],
+        'RESISTENCIA':[80,70,65,75],
+        'VELOCIDAD':[85,72,60,88],
+        'DRIBLE':[82,74,58,80],
+        'PEGADA':[78,66,55,83],
+        'PASE':[70,80,50,65],
+        'DEFENSA':[40,55,80,30],
+        'SEXO':['H','H','M','H']
+    })
+    features = ['EDAD','RESISTENCIA','VELOCIDAD','DRIBLE','PEGADA','PASE','DEFENSA','SEXO']
+
+# Layout: izquierda onboarding, derecha control
+left, right = st.columns([1,2])
+
+with left:
+    st.header("Cargar datos")
+
+    with st.expander("📘 Modelo y onboarding (ejemplo de archivo)", expanded=True):
+        st.markdown("""
+        **Formato esperado:**
+        - Modo Express: NOMBRE, SEXO, RESISTENCIA, HABILIDAD, POSICION
+        - Modo Avanzado: todas las columnas detalladas
+
+        **Pasos de carga:**
+        1. Descargá el modelo de Excel de ejemplo.  
+        2. Completá los jugadores.  
+        3. Subí el archivo o pegá la tabla en el editor.  
+        > Si tenés preguntas, contactame en LinkedIn: [peraltajm](https://www.linkedin.com/in/peraltajm/)
+        """, unsafe_allow_html=True)
+
+        towrite = io.BytesIO()
+        template.to_excel(towrite, index=False, sheet_name='ejemplo')
+        towrite.seek(0)
+        st.download_button(label="📥 Descargar modelo (.xlsx)", data=towrite, file_name="modelo_ejemplo_team.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    archivo = st.file_uploader("Cargar archivo .xlsx", type=["xlsx"])
+    st.markdown("**O editá la tabla aquí**")
+    edited = st.data_editor(template.copy(), num_rows="dynamic")
+
+    st.markdown("---")
+    st.markdown("**Opciones de generación**")
+    n_clusters = st.selectbox("Número de equipos", options=[2,3,4], index=0)
+    random_state = st.number_input("Seed (random_state)", min_value=0, value=42, step=1)
+    cabeza_a = st.text_input("Cabeza de grupo A (opcional)")
+    cabeza_b = st.text_input("Cabeza de grupo B (opcional)")
+
+with right:
+    st.header("Previsualización y control")
+    source = st.radio("Fuente de datos", options=["Subir archivo","Usar editor (tabla)"]) 
+
+    if source == "Subir archivo":
+        if archivo:
+            try:
+                df = pd.read_excel(archivo)
+                st.success('Archivo cargado correctamente')
+            except Exception as e:
+                st.error(f'Error leyendo el archivo: {e}')
+                df = None
+        else:
+            df = None
+            st.info('No hay archivo cargado. Podés usar la tabla del editor.')
+    else:
+        df = edited.copy()
+
+    if df is not None:
+        missing = [c for c in columnas_esperadas if c not in df.columns]
+        if missing:
+            st.error(f'Faltan columnas: {missing}')
+            st.stop()
+        else:
+            st.success('Estructura de columnas OK')
+            st.dataframe(df.head(10))
+
+    if st.button('Generar Equipos', type='primary'):
+        if df is None:
+            st.error('No hay datos para generar equipos.')
+        else:
+            with st.spinner('Generando equipos con K-Means...'):
+                df_proc = df.copy()
+                if 'SEXO' in df_proc.columns:
+                    df_proc['SEXO'] = df_proc['SEXO'].astype(str).str.upper().map({'M':1,'H':1,'HOMBRE':1,'F':0,'MUJER':0})
+                    df_proc['SEXO'] = df_proc['SEXO'].fillna(0.5)
+
+                for f in features:
+                    df_proc[f] = pd.to_numeric(df_proc[f], errors='coerce').fillna(0)
+
+                scaler = MinMaxScaler()
+                X = scaler.fit_transform(df_proc[features])
+
+                kmeans = KMeans(n_clusters=n_clusters, random_state=int(random_state), n_init=10)
+                labels = kmeans.fit_predict(X)
+                df_proc['cluster'] = labels
+
+                teams = {c: df_proc[df_proc['cluster']==c].reset_index(drop=True) for c in range(n_clusters)}
+
+                if cabeza_a:
+                    mask = df_proc['NOMBRE']==cabeza_a
+                    if mask.any():
+                        df_proc.loc[mask,'cluster'] = 0
+                if cabeza_b and n_clusters>1:
+                    mask = df_proc['NOMBRE']==cabeza_b
+                    if mask.any():
+                        df_proc.loc[mask,'cluster'] = 1
+                teams = {c: df_proc[df_proc['cluster']==c].reset_index(drop=True) for c in range(n_clusters)}
+
+            st.success('Equipos generados ✅')
+            cols = st.columns(n_clusters)
+
+            # Export Excel
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                for c in range(n_clusters):
+                    teams[c].to_excel(writer, index=False, sheet_name=f'Equipo_{c+1}')
+            processed_data = output.getvalue()
+            st.download_button('📥 Exportar resultados (.xlsx)', data=processed_data, file_name='equipos_generados.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+            for i in range(n_clusters):
+                with cols[i]:
+                    st.markdown(f"<div class='card team-card'><h4>Equipo {i+1} — {len(teams[i])} jugadores</h4>", unsafe_allow_html=True)
+                    st.dataframe(teams[i])
+
+                    txt = '\n'.join(teams[i]['NOMBRE'].astype(str).tolist())
+                    copy_html = f"""
+                    <div style='margin-top:8px;'>
+                      <button onclick="navigator.clipboard.writeText(`{txt}`)">Copiar nombres</button>
+                    </div>
+                    """
+                    components.html(copy_html, height=60)
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+# Footer
+st.markdown('---')
+st.markdown('☕ Si te gustó esta app y te sirvió, podés invitarme un cafecito en [Cafecito](https://cafecito.app/jmperalta)')
+st.markdown('Creado por Juan Manuel — Build Your Team APP · [LinkedIn](https://www.linkedin.com/in/peraltajm/)')
