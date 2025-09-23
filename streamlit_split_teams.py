@@ -27,16 +27,21 @@ st.markdown(
         }
         .card {
             background: #ffffff;
+            color: #000000 !important;
             padding: 1em;
             border-radius: 1em;
             box-shadow: 0 4px 10px rgba(0,0,0,0.05);
             margin-bottom: 1em;
         }
-        @media (max-width: 768px) {
-            .st-emotion-cache-16txtl3 {
-                flex-direction: column;
-            }
+        .modo-banner {
+            padding: 0.5em;
+            border-radius: 0.5em;
+            font-weight: bold;
+            margin-bottom: 1em;
+            text-align: center;
         }
+        .modo-express { background-color: #d1f7c4; color: #256029; }
+        .modo-avanzado { background-color: #cce5ff; color: #084298; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -53,7 +58,8 @@ st.markdown("Subí un archivo `.xlsx` con tus jugadores o cargá los datos en la
 modo = st.radio("Seleccioná el modo:", ["Express", "Avanzado"], horizontal=True)
 
 if modo == "Express":
-    columnas_esperadas = ["NOMBRE", "SEXO", "POSICION", "RESISTENCIA", "HABILIDAD"]
+    columnas_esperadas = ["NOMBRE", "SEXO", "POSICION", "PUNTAJE"]
+    st.markdown('<div class="modo-banner modo-express">🟢 Estás en MODO EXPRESS</div>', unsafe_allow_html=True)
 else:
     columnas_esperadas = [
         "NOMBRE",
@@ -67,6 +73,7 @@ else:
         "DEFENSA",
         "SEXO",
     ]
+    st.markdown('<div class="modo-banner modo-avanzado">🔵 Estás en MODO AVANZADO</div>', unsafe_allow_html=True)
 
 # ------------------------------
 # FUNCIONES AUXILIARES
@@ -97,6 +104,17 @@ def generar_equipos(df, cabeza_a=None, cabeza_b=None):
     equipo_a = df[df_features["cluster"] == 0]
     equipo_b = df[df_features["cluster"] == 1]
 
+    # Forzar cabezas de serie
+    if cabeza_a and cabeza_a in df["NOMBRE"].values:
+        jugador_a = df[df["NOMBRE"] == cabeza_a]
+        equipo_a = pd.concat([equipo_a, jugador_a]).drop_duplicates(subset=["NOMBRE"])
+        equipo_b = equipo_b[equipo_b["NOMBRE"] != cabeza_a]
+
+    if cabeza_b and cabeza_b in df["NOMBRE"].values:
+        jugador_b = df[df["NOMBRE"] == cabeza_b]
+        equipo_b = pd.concat([equipo_b, jugador_b]).drop_duplicates(subset=["NOMBRE"])
+        equipo_a = equipo_a[equipo_a["NOMBRE"] != cabeza_b]
+
     return equipo_a, equipo_b
 
 
@@ -115,16 +133,25 @@ if archivo:
 else:
     # Crear tabla editable vacía
     default_df = pd.DataFrame(columns=columnas_esperadas)
+
+    # Configuración dinámica de columnas
+    column_config = {
+        "SEXO": st.column_config.SelectboxColumn("Sexo", options=["M", "F"], required=True),
+        "POSICION": st.column_config.SelectboxColumn("Posición", options=["ATAQUE", "DEFENSA", "ARQUERO"], required=True),
+    }
+
+    if "PUNTAJE" in columnas_esperadas:
+        column_config["PUNTAJE"] = st.column_config.NumberColumn(
+            "Puntaje",
+            help="De 0 a 100. Rango: 90-100 = 'Crack', 70-89 = 'Muy bueno', 50-69 = 'Promedio', <50 = 'A mejorar'",
+            min_value=0,
+            max_value=100,
+            step=1,
+        )
+
     df = st.data_editor(
         default_df,
-        column_config={
-            "SEXO": st.column_config.SelectboxColumn(
-                "Sexo", options=["M", "F"], required=True
-            ),
-            "POSICION": st.column_config.SelectboxColumn(
-                "Posición", options=["ATAQUE", "DEFENSA", "ARQUERO"], required=True
-            ),
-        },
+        column_config=column_config,
         num_rows="dynamic",
         use_container_width=True,
     )
@@ -156,7 +183,7 @@ if all(col in df.columns for col in columnas_esperadas) and not df.empty:
             for _, row in equipo_b.iterrows():
                 st.markdown(f"<div class='card'><b>{row['NOMBRE']}</b><br>📌 {row['POSICION']}</div>", unsafe_allow_html=True)
 
-        # Radar chart
+        # Radar chart comparativo (solo si Avanzado)
         stats_a = resumir_stats(equipo_a)
         stats_b = resumir_stats(equipo_b)
 
@@ -167,6 +194,23 @@ if all(col in df.columns for col in columnas_esperadas) and not df.empty:
             radar_df = pd.melt(radar_df, id_vars=["Habilidad"], var_name="Equipo", value_name="Valor")
             fig = px.line_polar(radar_df, r="Valor", theta="Habilidad", color="Equipo", line_close=True)
             st.plotly_chart(fig, use_container_width=True)
+
+        # Gráfico de medias
+        medias = pd.DataFrame({
+            "Equipo": ["A"] * len(stats_a) + ["B"] * len(stats_b),
+            "Variable": list(stats_a.index) + list(stats_b.index),
+            "Media": list(stats_a.values) + list(stats_b.values),
+        })
+        fig_media = px.bar(medias, x="Variable", y="Media", color="Equipo", barmode="group", title="Promedio de variables por equipo")
+        st.plotly_chart(fig_media, use_container_width=True)
+
+        # Distribución de sexo
+        sexo_dist = pd.concat([
+            equipo_a.assign(Equipo="A"),
+            equipo_b.assign(Equipo="B")
+        ])
+        fig_sexo = px.histogram(sexo_dist, x="SEXO", color="Equipo", barmode="group", title="Distribución de sexo por equipo")
+        st.plotly_chart(fig_sexo, use_container_width=True)
 
         # Exportar a Excel
         output = io.BytesIO()
@@ -185,6 +229,16 @@ if all(col in df.columns for col in columnas_esperadas) and not df.empty:
             file_name="equipos.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+    # Leyenda de puntajes en modo Express
+    if "PUNTAJE" in df.columns:
+        st.markdown("#### 🎚️ Escala de Puntajes")
+        st.markdown("""
+        - 🟩 **90-100**: Crack!  
+        - 🟨 **70-89**: Muy bueno  
+        - 🟧 **50-69**: Promedio  
+        - 🟥 **0-49**: A mejorar  
+        """)
 
 # ------------------------------
 # FOOTER
